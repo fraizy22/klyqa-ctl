@@ -28,6 +28,7 @@ import argparse
 import select
 import logging
 from typing import TypeVar, Any
+
 NoneType = type(None)
 import requests, uuid, json
 import os.path
@@ -39,6 +40,7 @@ import asyncio, aiofiles
 import functools, traceback
 from asyncio.exceptions import CancelledError, TimeoutError
 from collections.abc import Callable
+import errno
 
 import slugify as unicode_slug
 
@@ -52,7 +54,7 @@ except:
 from typing import TypeVar
 
 # DEFAULT_SEND_TIMEOUT_MS=5000000000
-DEFAULT_SEND_TIMEOUT_MS=5000
+DEFAULT_SEND_TIMEOUT_MS = 5000
 
 LOGGER = logging.getLogger(__package__)
 LOGGER.setLevel(level=logging.INFO)
@@ -309,8 +311,6 @@ class AsyncIOLock:
         return cls._instance
 
 
-tcp_udp_port_lock = AsyncIOLock.instance()
-
 class RefParse:
     """RefParse"""
 
@@ -327,7 +327,7 @@ class KlyqaBulbResponse:
     response_msg: dict = {}
     ts: datetime.datetime = datetime.datetime.now()
 
-    def __init__(self, type = type, response_msg: dict = {}):
+    def __init__(self, type=type, response_msg: dict = {}):
         self.type = type
         self.response_msg = response_msg
         self.ts = datetime.datetime.now()
@@ -354,7 +354,7 @@ class KlyqaBulbResponseIdent(KlyqaBulbResponse):
         product_id: str,
         unit_id: dict,
         sdk_version: str = "",  # optional due to virtual devices not having sdk version
-        **kwargs
+        **kwargs,
     ):
         super().__init__(**kwargs)
         self.type = type
@@ -459,7 +459,7 @@ def format_uid(text: str) -> str:
     return unicode_slug.slugify(text)
 
 
-class KlyqaBulbResponseStatus: #(KlyqaBulbResponse):
+class KlyqaBulbResponseStatus:  # (KlyqaBulbResponse):
     """Klyqa_Bulb_Response_Status"""
 
     type: str = ""
@@ -498,7 +498,9 @@ class KlyqaBulbResponseStatus: #(KlyqaBulbResponse):
         # super().__init__(**kwargs)
         self.type = type
         self.status = status
-        self.color = RGBColor(color["red"], color["green"], color["blue"]) if color else {}
+        self.color = (
+            RGBColor(color["red"], color["green"], color["blue"]) if color else {}
+        )
         self.brightness = brightness["percentage"]
         self.temperature = temperature
         self.active_command = active_command
@@ -559,16 +561,20 @@ class CloudConnection:
         self.received_packages = []
 
 
-Bulb_TCP_return = Enum("Bulb_TCP_return", "sent answered wrong_uid wrong_aes tcp_error unknown_error timeout nothing_done sent_error no_message_to_send bulb_lock_timeout err_local_iv missing_aes_key response_error")
+Bulb_TCP_return = Enum(
+    "Bulb_TCP_return",
+    "sent answered wrong_uid wrong_aes tcp_error unknown_error timeout nothing_done sent_error no_message_to_send bulb_lock_timeout err_local_iv missing_aes_key response_error",
+)
 
 
 Message_state = Enum("Message_state", "sent answered unsent")
+
 
 @dataclass
 class Message:
     started: datetime.datetime
     msg_queue: list[tuple]
-    msg_queue_sent = [] #: list[str] = dataclasses.field(default_factory=list)
+    msg_queue_sent = []  #: list[str] = dataclasses.field(default_factory=list)
     args: list[str]
     target_uid: str
     state: Message_state = Message_state.unsent
@@ -591,8 +597,12 @@ class Message:
         await self.callback(self, self.target_uid)
 
     async def check_msg_ttl(self):
-        if datetime.datetime.now() - self.started > datetime.timedelta(seconds=self.time_to_live_secs):
-            LOGGER.debug(f"time to live {self.time_to_live_secs} seconds for message {self.msg_counter} {self.msg_queue} ended.")
+        if datetime.datetime.now() - self.started > datetime.timedelta(
+            seconds=self.time_to_live_secs
+        ):
+            LOGGER.debug(
+                f"time to live {self.time_to_live_secs} seconds for message {self.msg_counter} {self.msg_queue} ended."
+            )
             if self.callback:
                 await self.call_cb()
             return False
@@ -869,6 +879,7 @@ commands_send_to_bulb = [
 
 S = TypeVar("S", argparse.ArgumentParser, type(None))
 
+
 class EventQueuePrinter:
     """Single event queue printer for job printing."""
 
@@ -1063,7 +1074,7 @@ def add_command_args(parser):
         default=False,
     )
 
-    # TODO: currently not fully implemented
+    # TODO: to be done
     # parser.add_argument(
     #     "--identity",
     #     help="send status request",
@@ -1165,6 +1176,7 @@ TEST_HOST = "https://app-api.test.qconnex.io"
 SEND_LOOP_MAX_SLEEP_TIME = 0.05
 MSG_COUNTER = 0
 
+
 class Klyqa_account:
     """
 
@@ -1199,7 +1211,7 @@ class Klyqa_account:
     tcp: socket
     udp: socket
 
-    def __init__(self, username="", password="", host="", bind_ports: bool = False):
+    def __init__(self, username="", password="", host=""):
 
         self.username = username
         self.password = password
@@ -1216,14 +1228,40 @@ class Klyqa_account:
         self.message_queue_new: list[tuple] = []
         self.search_and_send_loop_task: asyncio.Task = None
         self.__read_tcp_task: asyncio.Task = None
-        self.tcp = None
-        self.udp = None
-        if bind_ports:
-            asyncio.run(self.bind_ports())
-    
-    async def bind_ports(self, server_ip: str = None) -> bool:
+        self.tcp: socket = None
+        self.udp: socket = None
+
+    async def remote_connection_closed(self, sock: socket.socket) -> bool:
+        """
+        Returns True if the remote side did close the connection
+
+        """
+        loop = asyncio.get_event_loop()
+        try:
+            # buf = await loop.run_in_executor(None, sock.recv, 1, socket.MSG_PEEK | socket.MSG_DONTWAIT):
+            buf = sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+            if buf == b"":
+                return True
+        except BlockingIOError as exc:
+            if exc.errno != errno.EAGAIN:
+                # Raise on unknown exception
+                raise
+        return False
+
+    def bind_ports(self, server_ip: str = None) -> bool:
         """bind ports."""
-        await tcp_udp_port_lock.acquire()
+        # try:
+        #     if ((self.tcp and not await self.remote_connection_closed(self.tcp)) and
+        #          (self.udp and not await self.remote_connection_closed(self.udp))):
+        #         return True
+        # except Exception as e:
+        #     return False
+        # if (self.tcp and not self.tcp._closed) and (self.udp and not self.udp._closed):
+        #     return
+        if self.tcp:
+            self.tcp.close()
+        if self.udp:
+            self.udp.close()
         try:
             self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -1269,9 +1307,7 @@ class Klyqa_account:
 
             LOGGER.debug(f"started tcp bulb {bulb.local.address['ip']}")
             try:
-                return_state = await self.aes_handshake_and_send_msgs(
-                    r_bulb, r_msg
-                )
+                return_state = await self.aes_handshake_and_send_msgs(r_bulb, r_msg)
                 bulb = r_bulb.ref
                 msg_sent = r_msg.ref
             except CancelledError as e:
@@ -1283,15 +1319,23 @@ class Klyqa_account:
             except Exception as e:
                 LOGGER.debug(f"{traceback.format_exc()}")
             finally:
-                LOGGER.debug(f"finished tcp bulb {bulb.local.address['ip']}, return_state: {return_state}")
+                LOGGER.debug(
+                    f"finished tcp bulb {bulb.local.address['ip']}, return_state: {return_state}"
+                )
 
                 if msg_sent and not msg_sent.callback is None:
                     await msg_sent.callback(msg_sent, bulb.u_id)
                     LOGGER.debug(f"bulb {bulb.u_id} answered msg {msg_sent.msg_queue}")
 
-                if not bulb or (bulb and not bulb.u_id in self.message_queue or not self.message_queue[bulb.u_id]):
+                if not bulb or (
+                    bulb
+                    and not bulb.u_id in self.message_queue
+                    or not self.message_queue[bulb.u_id]
+                ):
                     try:
-                        LOGGER.debug(f"no more messages to sent for bulb {bulb.u_id}, close tcp tunnel.")
+                        LOGGER.debug(
+                            f"no more messages to sent for bulb {bulb.u_id}, close tcp tunnel."
+                        )
                         bulb.local.connection.shutdown(socket.SHUT_RDWR)
                         bulb.local.connection.close()
                         bulb.local.connection = None
@@ -1328,7 +1372,9 @@ class Klyqa_account:
                             pass
 
                 elif return_state == 1:
-                    LOGGER.error(f"Unknown error during send (and handshake) with bulb {unit_id}.")
+                    LOGGER.error(
+                        f"Unknown error during send (and handshake) with bulb {unit_id}."
+                    )
                 elif return_state == 2:
                     pass
                     # LOGGER.debug(f"Wrong bulb unit id.{unit_id}")
@@ -1350,7 +1396,11 @@ class Klyqa_account:
         loop = asyncio.get_event_loop()
 
         try:
-            while self.tcp:
+            if not self.tcp or not self.udp:  # or self.udp.closed):
+                self.bind_ports()
+            while True:  # self.tcp:
+                if not self.tcp or not self.udp:  # or self.udp.closed):
+                    break
                 # for debug cursor jump:
                 a = False
                 if a:
@@ -1389,10 +1439,23 @@ class Klyqa_account:
                         read_broadcast_response = False
                         # maybe return error value for telling udp port connection needs to be renewed.
 
+                        LOGGER.debug("rebind ports")
+                        if not self.bind_ports():
+                            LOGGER.error("Error binding ports udp 2222 and tcp 3333.")
+
                     if not read_broadcast_response:
                         try:
                             LOGGER.debug(f"sleep task create (broadcasts)..")
-                            self.__send_loop_sleep = loop.create_task(asyncio.sleep(SEND_LOOP_MAX_SLEEP_TIME if (len(self.message_queue) > 0 or len(self.message_queue_new) > 0) else 1000000000))
+                            self.__send_loop_sleep = loop.create_task(
+                                asyncio.sleep(
+                                    SEND_LOOP_MAX_SLEEP_TIME
+                                    if (
+                                        len(self.message_queue) > 0
+                                        or len(self.message_queue_new) > 0
+                                    )
+                                    else 1000000000
+                                )
+                            )
 
                             LOGGER.debug(f"sleep task wait..")
                             done, pending = await asyncio.wait([self.__send_loop_sleep])
@@ -1409,24 +1472,47 @@ class Klyqa_account:
 
                         timeout_read = 1.9
                         LOGGER.debug("Read again tcp port..")
+
                         async def read_tcp_task():
                             try:
                                 return await loop.run_in_executor(
-                                None, select.select, [self.tcp], [], [], timeout_read)
+                                    None,
+                                    select.select,
+                                    [self.tcp],
+                                    [],
+                                    [],
+                                    timeout_read,
+                                )
                             except CancelledError as e:
                                 LOGGER.debug("cancelled tcp reading.")
                             except Exception as e:
                                 LOGGER.error(f"{traceback.format_exc()}")
+                                LOGGER.debug("Expection. Rebind ports")
+                                raise
+
                         self.__read_tcp_task = asyncio.create_task(read_tcp_task())
 
                         LOGGER.debug("Started tcp reading..")
                         try:
-                            await asyncio.wait_for(self.__read_tcp_task,timeout=1.0)
+                            await asyncio.wait_for(self.__read_tcp_task, timeout=1.0)
+                        except asyncio.TimeoutError as e:
+                            LOGGER.debug(
+                                f"Socket-Timeout for incoming tcp connections."
+                            )
                         except Exception as e:
-                            LOGGER.debug(f"Socket-Timeout for incoming tcp connections.")
+                            LOGGER.debug(f"Socket exception")
+                            if not self.bind_ports():
+                                LOGGER.error(
+                                    "Error binding ports udp 2222 and tcp 3333."
+                                )
+                                break
 
                         result = self.__read_tcp_task.result()
-                        if not result or not isinstance(result, tuple) or not len(result) == 3: # or self.__read_tcp_task.cancelled():
+                        if (
+                            not result
+                            or not isinstance(result, tuple)
+                            or not len(result) == 3
+                        ):  # or self.__read_tcp_task.cancelled():
                             LOGGER.debug("no tcp read result. break")
                             break
                         readable, _, _ = self.__read_tcp_task.result()
@@ -1443,20 +1529,22 @@ class Klyqa_account:
                             bulb.local.address["port"] = addr[1]
 
                             new_task = loop.create_task(
-                                self.bulb_handle_local_tcp(
-                                    bulb
-                                )
+                                self.bulb_handle_local_tcp(bulb)
                             )
 
                             # for test:
                             await asyncio.wait([new_task], timeout=0.00000001)
                             # timeout task for the bulb tcp task
-                            loop.create_task(asyncio.wait_for(new_task, timeout=(timeout_ms/1000)))
+                            loop.create_task(
+                                asyncio.wait_for(new_task, timeout=(timeout_ms / 1000))
+                            )
 
                             LOGGER.debug(
                                 f"Address {bulb.local.address['ip']} process task created."
                             )
-                            self.__tasks_undone.append((new_task, datetime.datetime.now())) # bulb.u_id
+                            self.__tasks_undone.append(
+                                (new_task, datetime.datetime.now())
+                            )  # bulb.u_id
 
                     try:
                         to_del = []
@@ -1479,12 +1567,16 @@ class Klyqa_account:
                     tasks_undone_new = []
                     for task, started in self.__tasks_undone:
                         if task.done():
-                            self.__tasks_done.append((task, started, datetime.datetime.now()))
+                            self.__tasks_done.append(
+                                (task, started, datetime.datetime.now())
+                            )
                             e = task.exception()
                             if e:
                                 LOGGER.debug(f"Exception error in {task._coro}: {e}")
                         else:
-                            if datetime.datetime.now() - started > datetime.timedelta(milliseconds = int(timeout_ms * 1000)):
+                            if datetime.datetime.now() - started > datetime.timedelta(
+                                milliseconds=int(timeout_ms * 1000)
+                            ):
                                 task.cancel()
                             tasks_undone_new.append((task, started))
                     self.__tasks_undone = tasks_undone_new
@@ -1499,7 +1591,13 @@ class Klyqa_account:
                 if not len(self.message_queue_new) and not len(self.message_queue):
                     try:
                         LOGGER.debug(f"sleep task create (searchandsendloop)..")
-                        self.__send_loop_sleep = loop.create_task(asyncio.sleep(SEND_LOOP_MAX_SLEEP_TIME if len(self.message_queue) > 0 else 1000000000))
+                        self.__send_loop_sleep = loop.create_task(
+                            asyncio.sleep(
+                                SEND_LOOP_MAX_SLEEP_TIME
+                                if len(self.message_queue) > 0
+                                else 1000000000
+                            )
+                        )
                         LOGGER.debug(f"sleep task wait..")
                         done, pending = await asyncio.wait([self.__send_loop_sleep])
                         LOGGER.debug(f"sleep task done..")
@@ -1523,7 +1621,9 @@ class Klyqa_account:
         pass
 
     async def search_and_send_loop_task_stop(self):
-        while self.search_and_send_loop_task and not self.search_and_send_loop_task.done():
+        while (
+            self.search_and_send_loop_task and not self.search_and_send_loop_task.done()
+        ):
             LOGGER.debug("stop send and search loop.")
             if self.search_and_send_loop_task:
                 self.search_and_send_loop_task.cancel()
@@ -1536,20 +1636,29 @@ class Klyqa_account:
             LOGGER.debug("wait end for send and search loop.")
         pass
 
-
     def search_and_send_loop_task_alive(self):
 
         loop = asyncio.get_event_loop()
 
         if not self.search_and_send_loop_task or self.search_and_send_loop_task.done():
             LOGGER.debug("search and send loop task created.")
-            self.search_and_send_loop_task = asyncio.create_task(self.search_and_send_to_bulb())
+            self.search_and_send_loop_task = asyncio.create_task(
+                self.search_and_send_to_bulb()
+            )
         try:
             self.__send_loop_sleep.cancel()
         except:
             pass
 
-    async def set_send_message(self, send_msg, target_bulb_uid, args, callback = None, time_to_live_secs=-1.0, started=datetime.datetime.now()):
+    async def set_send_message(
+        self,
+        send_msg,
+        target_bulb_uid,
+        args,
+        callback=None,
+        time_to_live_secs=-1.0,
+        started=datetime.datetime.now(),
+    ):
 
         loop = asyncio.get_event_loop()
         # self.message_queue_new.append((send_msg, target_bulb_uid, args, callback, time_to_live_secs, started))
@@ -1559,13 +1668,21 @@ class Klyqa_account:
             await callback(None, target_bulb_uid)
             return False
 
-        msg = Message(datetime.datetime.now(), send_msg, args,
-        target_uid = target_bulb_uid, callback = callback, time_to_live_secs = time_to_live_secs)
+        msg = Message(
+            datetime.datetime.now(),
+            send_msg,
+            args,
+            target_uid=target_bulb_uid,
+            callback=callback,
+            time_to_live_secs=time_to_live_secs,
+        )
 
         if not await msg.check_msg_ttl():
             return False
 
-        LOGGER.debug(f"new message {msg.msg_counter} target {target_bulb_uid} {send_msg}")
+        LOGGER.debug(
+            f"new message {msg.msg_counter} target {target_bulb_uid} {send_msg}"
+        )
 
         self.message_queue.setdefault(target_bulb_uid, []).append(msg)
 
@@ -1625,14 +1742,17 @@ class Klyqa_account:
                 login_response = await loop.run_in_executor(
                     None,
                     functools.partial(
-                        requests.post, self.host + "/auth/login", json=login_data, timeout=10
+                        requests.post,
+                        self.host + "/auth/login",
+                        json=login_data,
+                        timeout=10,
                     ),
                 )
 
-                if (not login_response or (
+                if not login_response or (
                     login_response.status_code != 200
                     and login_response.status_code != 201
-                )):
+                ):
                     LOGGER.error(
                         str(login_response.status_code)
                         + ", "
@@ -1713,6 +1833,7 @@ class Klyqa_account:
                     bulb.acc_sets = device
 
                     self.bulbs[format_uid(device["localDeviceId"])] = bulb
+
                     async def req():
                         try:
                             ret = await self.request(
@@ -1721,10 +1842,9 @@ class Klyqa_account:
                             return ret
                         except:
                             return None
+
                     try:
-                        cloud_state = asyncio.run(
-                            req()
-                        )
+                        cloud_state = asyncio.run(req())
                         if cloud_state:
                             if "connected" in cloud_state:
                                 state_str = (
@@ -1777,9 +1897,8 @@ class Klyqa_account:
                             return ret
                         except:
                             return None
-                    config = asyncio.run(
-                        req()
-                    )
+
+                    config = asyncio.run(req())
                     if config:
                         bulb_config: Bulb_config = config
                         bulb_configs[id] = bulb_config
@@ -1917,7 +2036,9 @@ class Klyqa_account:
         msg_sent: Message = None
         communication_finished = False
 
-        while not communication_finished and (len(self.message_queue) > 0 or elapsed < pause):
+        while not communication_finished and (
+            len(self.message_queue) > 0 or elapsed < pause
+        ):
             try:
                 data = await loop.run_in_executor(
                     None, bulb.local.connection.recv, 4096
@@ -1946,13 +2067,15 @@ class Klyqa_account:
                         self.message_queue[bulb.u_id].remove(msg)
                         msg.state = Message_state.sent
 
-                        if bulb.u_id in self.message_queue and not self.message_queue[bulb.u_id]:
+                        if (
+                            bulb.u_id in self.message_queue
+                            and not self.message_queue[bulb.u_id]
+                        ):
                             del self.message_queue[bulb.u_id]
                     except Exception as e:
                         LOGGER.debug(traceback.format_exc())
 
                 return_val = Bulb_TCP_return.sent
-
 
                 if len(msg.msg_queue[-1]) == 2:
                     text, ts = msg.msg_queue.pop()
@@ -1982,7 +2105,11 @@ class Klyqa_account:
                 try:
                     send_next = elapsed >= pause
                     # if len(message_queue_tx) > 0 and :
-                    while send_next and bulb.u_id in self.message_queue and i < len(self.message_queue[bulb.u_id]):
+                    while (
+                        send_next
+                        and bulb.u_id in self.message_queue
+                        and i < len(self.message_queue[bulb.u_id])
+                    ):
                         msg = self.message_queue[bulb.u_id][i]
                         i = i + 1
                         if msg.state == Message_state.unsent:
@@ -2053,7 +2180,10 @@ class Klyqa_account:
                     bulb.local.received_packages.append(json_response)
                     bulb.save_bulb_message(json_response)
 
-                    if not bulb.u_id in self.message_queue or not self.message_queue[bulb.u_id]:
+                    if (
+                        not bulb.u_id in self.message_queue
+                        or not self.message_queue[bulb.u_id]
+                    ):
                         if bulb.u_id in self.message_queue:
                             del self.message_queue[bulb.u_id]
                         return Bulb_TCP_return.no_message_to_send
@@ -2121,7 +2251,9 @@ class Klyqa_account:
                         bulb.save_bulb_message(json_response)
                         bulb.local.sent_msg_answer = json_response
                         bulb.local.aes_key_confirmed = True
-                        LOGGER.debug(f"buld uid {bulb.u_id} aes_confirmed {bulb.local.aes_key_confirmed}")
+                        LOGGER.debug(
+                            f"buld uid {bulb.u_id} aes_confirmed {bulb.local.aes_key_confirmed}"
+                        )
                     except:
                         LOGGER.error("Could not load json message from bulb: ")
                         LOGGER.error(str(pkg))
@@ -2191,7 +2323,15 @@ class Klyqa_account:
 
         # self.acc_settings = self.acc_settings[list(self.acc_settings.keys())[0]]
 
-    async def _send_to_bulbs(self, args, args_in, udp, tcp, timeout_ms=5000, async_answer_callback: Callable[[Message, str], Any] = None):
+    async def _send_to_bulbs(
+        self,
+        args,
+        args_in,
+        udp,
+        tcp,
+        timeout_ms=5000,
+        async_answer_callback: Callable[[Message, str], Any] = None,
+    ):
         """Collect the messages for the bulbs to send to
 
         Args:
@@ -2232,9 +2372,17 @@ class Klyqa_account:
 
             # TODO: Missing cloud discovery and interactive bulb selection. Send to bulbs if given as argument working.
             if (args.local or args.tryLocalThanCloud) and (
-                not args.bulb_name and not args.bulb_unitids and not args.all and not args.discover
+                not args.bulb_name
+                and not args.bulb_unitids
+                and not args.all
+                and not args.discover
             ):
-                discover_local_args = ["--request", "--all", "--selectBulb", "--discover"]
+                discover_local_args = [
+                    "--request",
+                    "--all",
+                    "--selectBulb",
+                    "--discover",
+                ]
 
                 orginal_args_parser = get_description_parser()
                 discover_local_args_parser = get_description_parser()
@@ -2252,7 +2400,11 @@ class Klyqa_account:
                 )
 
                 uids = await self._send_to_bulbs(
-                    discover_local_args_parsed, args_in, udp=udp, tcp=tcp, timeout_ms=3500
+                    discover_local_args_parsed,
+                    args_in,
+                    udp=udp,
+                    tcp=tcp,
+                    timeout_ms=3500,
                 )
                 if isinstance(uids, set) or isinstance(uids, list):
                     args_in.extend(["--bulb_unitids", ",".join(list(uids))])
@@ -2280,7 +2432,9 @@ class Klyqa_account:
                 ]
                 if not dev:
                     LOGGER.error(
-                        'Bulb name "' + args.bulb_name + '" not found in account settings.'
+                        'Bulb name "'
+                        + args.bulb_name
+                        + '" not found in account settings.'
                     )
                     return 1
                 else:
@@ -2304,7 +2458,9 @@ class Klyqa_account:
                     temperature_enum = []
                     try:
                         temperature_enum = [
-                            trait["value_schema"]["properties"]["colorTemperature"]["enum"]
+                            trait["value_schema"]["properties"]["colorTemperature"][
+                                "enum"
+                            ]
                             if "properties" in trait["value_schema"]
                             else trait["value_schema"]["enum"]
                             for trait in bulb_configs[product_id]["deviceTraits"]
@@ -2328,6 +2484,7 @@ class Klyqa_account:
                 for u_id in args.bulb_unitids[0].split(","):
                     u_id = format_uid(u_id)
                     if u_id not in self.bulbs or not self.bulbs[u_id].ident:
+
                         async def send_ping():
                             discover_local_args2 = ["--ping", "--bulb_unitids", u_id]
 
@@ -2338,16 +2495,24 @@ class Klyqa_account:
                             add_config_args(parser=discover_local_args_parser2)
                             add_command_args(parser=discover_local_args_parser2)
 
-                            original_config_args_parsed, _ = orginal_args_parser.parse_known_args(
-                                args=args_in
-                            )
+                            (
+                                original_config_args_parsed,
+                                _,
+                            ) = orginal_args_parser.parse_known_args(args=args_in)
 
-                            discover_local_args_parsed2 = discover_local_args_parser2.parse_args(
-                                discover_local_args2, namespace=original_config_args_parsed
+                            discover_local_args_parsed2 = (
+                                discover_local_args_parser2.parse_args(
+                                    discover_local_args2,
+                                    namespace=original_config_args_parsed,
+                                )
                             )
 
                             ret = await self._send_to_bulbs(
-                                discover_local_args_parsed2, args_in, udp=udp, tcp=tcp, timeout_ms=3000
+                                discover_local_args_parsed2,
+                                args_in,
+                                udp=udp,
+                                tcp=tcp,
+                                timeout_ms=3000,
                             )
                             if isinstance(ret, bool) and ret:
                                 return True
@@ -2355,10 +2520,10 @@ class Klyqa_account:
                                 return False
 
                         ret = await send_ping()
-                        if isinstance(ret, bool) and ret:
+                        if isinstance(ret, bool) and ret and self.bulbs[u_id].ident:
                             product_id = self.bulbs[u_id].ident.product_id
                         else:
-                            LOGGER.error(f"Bulb {u_id} not found.")
+                            LOGGER.error(f"Bulb {u_id} not found or identity missing.")
                             return False
                     product_id = self.bulbs[u_id].ident.product_id
                     if not temperature_enum:
@@ -2429,7 +2594,9 @@ class Klyqa_account:
                 message_queue_tx_command_cloud.append(json_msg)
 
             if args.ota is not None:
-                local_and_cloud_command_msg(({"type": "fw_update", "url": args.ota}, 10000))
+                local_and_cloud_command_msg(
+                    ({"type": "fw_update", "url": args.ota}, 10000)
+                )
 
             if args.ping:
                 local_and_cloud_command_msg({"type": "ping"}, 10000)
@@ -2457,7 +2624,11 @@ class Klyqa_account:
                 message_queue_tx_state_cloud.append({"status": args.power[0]})
 
             if not args.selectBulb:
-                product_ids = {bulb.ident.product_id for uid, bulb in self.bulbs.items() if bulb.ident and bulb.ident.product_id}
+                product_ids = {
+                    bulb.ident.product_id
+                    for uid, bulb in self.bulbs.items()
+                    if bulb.ident and bulb.ident.product_id
+                }
 
                 for product_id in list(product_ids):
                     if product_id in bulb_configs:
@@ -2543,7 +2714,10 @@ class Klyqa_account:
                         100,
                     )
 
-                    if int(value) < brightness_range[0] or int(value) > brightness_range[1]:
+                    if (
+                        int(value) < brightness_range[0]
+                        or int(value) > brightness_range[1]
+                    ):
                         return forced_continue(
                             f"Brightness {value} out of range [{brightness_range[0]}..{brightness_range[1]}]."
                         )
@@ -2602,7 +2776,9 @@ class Klyqa_account:
                 Check_bulb_parameter.scene: check_scene_support,
             }
 
-            def check_bulb_parameter(parameter: Check_bulb_parameter, values, product_id):
+            def check_bulb_parameter(
+                parameter: Check_bulb_parameter, values, product_id
+            ):
                 # if not bulb_configs and not forced_continue("Missing configs for bulbs."):
                 #     return False
 
@@ -2625,9 +2801,13 @@ class Klyqa_account:
                 #     return False
 
                 tt = args.transitionTime[0]
-                msg = color_message(r, g, b, int(tt), skipWait=args.brightness is not None)
+                msg = color_message(
+                    r, g, b, int(tt), skipWait=args.brightness is not None
+                )
 
-                check_color = functools.partial(check_bulb_parameter, Check_bulb_parameter.color, [r, g, b])
+                check_color = functools.partial(
+                    check_bulb_parameter, Check_bulb_parameter.color, [r, g, b]
+                )
                 msg = msg + (check_color,)
 
                 message_queue_tx_local.append(msg)
@@ -2644,7 +2824,9 @@ class Klyqa_account:
                     temperature, int(tt), skipWait=args.brightness is not None
                 )
 
-                check_temperature = functools.partial(check_bulb_parameter, Check_bulb_parameter.temperature, temperature)
+                check_temperature = functools.partial(
+                    check_bulb_parameter, Check_bulb_parameter.temperature, temperature
+                )
                 msg = msg + (check_temperature,)
 
                 temperature = json.loads(msg[0])["temperature"]
@@ -2659,7 +2841,9 @@ class Klyqa_account:
                 tt = args.transitionTime[0]
                 msg = brightness_message(brightness, int(tt))
 
-                check_brightness = functools.partial(check_bulb_parameter, Check_bulb_parameter.brightness, brightness)
+                check_brightness = functools.partial(
+                    check_bulb_parameter, Check_bulb_parameter.brightness, brightness
+                )
                 msg = msg + (check_brightness,)
 
                 message_queue_tx_local.append(msg)
@@ -2667,7 +2851,9 @@ class Klyqa_account:
                 message_queue_tx_state_cloud.append({"brightness": brightness})
 
             if args.percent_color is not None:
-                if not bulb_configs and not forced_continue("Missing configs for bulbs."):
+                if not bulb_configs and not forced_continue(
+                    "Missing configs for bulbs."
+                ):
                     return False
                 r, g, b, w, c = args.percent_color
                 tt = args.transitionTime[0]
@@ -2849,19 +3035,27 @@ class Klyqa_account:
                             discover_end_event.set()
 
                         LOGGER.debug(f"discover ping start")
-                        await self.set_send_message(message_queue_tx_local, "all", args, discover_answer_end, discover_timeout_secs)
+                        await self.set_send_message(
+                            message_queue_tx_local,
+                            "all",
+                            args,
+                            discover_answer_end,
+                            discover_timeout_secs,
+                        )
 
                         await discover_end_event.wait()
                         if self.bulbs:
-                            target_bulb_uids = set(u_id for u_id, v in self.bulbs.items())
+                            target_bulb_uids = set(
+                                u_id for u_id, v in self.bulbs.items()
+                            )
                     # else:
                     msg_wait_tasks = {}
 
                     to_send_bulb_uids = target_bulb_uids.copy()
 
-                    async def sl(uid):
+                    async def sleep_timeout_for_msg(uid):
                         try:
-                            await asyncio.sleep(timeout_ms/1000)
+                            await asyncio.sleep(timeout_ms / 1000)
                         except CancelledError as e:
                             LOGGER.debug(f"sleep uid {uid} cancelled.")
                         except Exception as e:
@@ -2869,11 +3063,10 @@ class Klyqa_account:
 
                     for i in target_bulb_uids:
                         try:
-                            msg_wait_tasks[i] = loop.create_task(sl(i))
+                            msg_wait_tasks[i] = loop.create_task(sleep_timeout_for_msg(i))
                         except Exception as e:
                             print("ok")
                             pass
-
 
                     async def async_answer_callback_local(msg, uid):
                         if msg and msg.msg_queue_sent:
@@ -2890,7 +3083,13 @@ class Klyqa_account:
                             await async_answer_callback(msg, uid)
 
                     for i in target_bulb_uids:
-                        await self.set_send_message(message_queue_tx_local.copy(), i, args, callback = async_answer_callback_local, time_to_live_secs=(timeout_ms / 1000))
+                        await self.set_send_message(
+                            message_queue_tx_local.copy(),
+                            i,
+                            args,
+                            callback=async_answer_callback_local,
+                            time_to_live_secs=(timeout_ms / 1000),
+                        )
 
                     for i in target_bulb_uids:
                         try:
@@ -2908,7 +3107,16 @@ class Klyqa_account:
                     if args.selectBulb:
                         print(sep_width * "-")
                         # bulbs_working = {k: v for k, v in self.bulbs.items() if v.local.aes_key_confirmed}
-                        bulbs_working = {u_id: bulb for u_id, bulb in self.bulbs.items() if (bulb.status and bulb.status.ts > send_started_local) or ((args.cloud or args.tryLocalThanCloud) and bulb.cloud and bulb.cloud.connected)}
+                        bulbs_working = {
+                            u_id: bulb
+                            for u_id, bulb in self.bulbs.items()
+                            if (bulb.status and bulb.status.ts > send_started_local)
+                            or (
+                                (args.cloud or args.tryLocalThanCloud)
+                                and bulb.cloud
+                                and bulb.cloud.connected
+                            )
+                        }
                         print(
                             "Found "
                             + str(len(bulbs_working))
@@ -2941,8 +3149,12 @@ class Klyqa_account:
                                 if bulb.local.address["ip"]
                                 else ""
                             )
-                            cloud = f" (cloud connected)" if bulb.cloud.connected else ""
-                            status = f" ({bulb.status})" if bulb.status else " (no status)"
+                            cloud = (
+                                f" (cloud connected)" if bulb.cloud.connected else ""
+                            )
+                            status = (
+                                f" ({bulb.status})" if bulb.status else " (no status)"
+                            )
                             print(f"{count}) {name}{status}{address}{cloud}")
                             count = count + 1
 
@@ -2958,7 +3170,9 @@ class Klyqa_account:
                                 for bulb_num in bulb_num_s.split(","):
                                     bulb_num = int(bulb_num)
                                     if bulb_num > 0 and bulb_num < count:
-                                        target_bulb_uids_lcl.add(bulb_items[bulb_num - 1].u_id)
+                                        target_bulb_uids_lcl.add(
+                                            bulb_items[bulb_num - 1].u_id
+                                        )
                             return target_bulb_uids_lcl
 
                         """ no bulbs found. Exit script. """
@@ -3007,7 +3221,9 @@ class Klyqa_account:
 
                 async def cloud_post(bulb: KlyqaBulb, json_message, target: str):
                     if not await bulb.use_lock():
-                        LOGGER.error(f"Couldn't get use lock for bulb {bulb.get_name()})")
+                        LOGGER.error(
+                            f"Couldn't get use lock for bulb {bulb.get_name()})"
+                        )
                         return 1
                     try:
                         await _cloud_post(bulb, json_message, target)
@@ -3027,7 +3243,10 @@ class Klyqa_account:
 
                     threads = []
                     target_bulbs = [
-                        b for b in self.bulbs.values() for t in target_uids if b.u_id == t
+                        b
+                        for b in self.bulbs.values()
+                        for t in target_uids
+                        if b.u_id == t
                     ]
 
                     def create_post_threads(target, msg):
@@ -3036,13 +3255,17 @@ class Klyqa_account:
                             for b in target_bulbs
                         ]
 
-                    state_payload_message = dict(ChainMap(*message_queue_tx_state_cloud))
+                    state_payload_message = dict(
+                        ChainMap(*message_queue_tx_state_cloud)
+                    )
                     command_payload_message = dict(
                         ChainMap(*message_queue_tx_command_cloud)
                     )
                     if state_payload_message:
                         threads.extend(
-                            create_post_threads("state", {"payload": state_payload_message})
+                            create_post_threads(
+                                "state", {"payload": state_payload_message}
+                            )
                         )
                     if command_payload_message:
                         threads.extend(
@@ -3050,7 +3273,7 @@ class Klyqa_account:
                         )
 
                     count = 0
-                    timeout = (timeout_ms / 1000)
+                    timeout = timeout_ms / 1000
                     for t, bulb in threads:
                         count = count + 1
                         """wait at most timeout_ms wanted minus seconds elapsed since sending"""
@@ -3095,7 +3318,13 @@ class Klyqa_account:
                 )
 
                 ret = await self._send_to_bulbs(
-                    scene_start_args_parsed, args_in, udp=udp, tcp=tcp, timeout_ms=timeout_ms-(datetime.datetime.now() - send_started).total_seconds()*1000 #3000
+                    scene_start_args_parsed,
+                    args_in,
+                    udp=udp,
+                    tcp=tcp,
+                    timeout_ms=timeout_ms
+                    - (datetime.datetime.now() - send_started).total_seconds()
+                    * 1000,  # 3000
                 )
 
                 if isinstance(ret, bool) and ret:
@@ -3107,6 +3336,7 @@ class Klyqa_account:
             return success
         except Exception as e:
             LOGGER.debug(traceback.format_exc())
+        pass
 
     async def send_to_bulbs(self, args_parsed, args_in, timeout_ms=5000):
         """set up broadcast port and tcp reply connection port"""
@@ -3126,8 +3356,9 @@ class Klyqa_account:
         # self.tcp = None
 
         if local_communication:
-            # await tcp_udp_port_lock.acquire()
-            if not await self.bind_ports(args_parsed.myip[0] if args_parsed.myip is not None else None):
+            if not self.bind_ports(
+                args_parsed.myip[0] if args_parsed.myip is not None else None
+            ):
                 return 1
             # try:
             #     self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -3167,14 +3398,21 @@ class Klyqa_account:
             if msg:
                 try:
                     LOGGER.info(f"Answer received from {uid}.")
-                    print(f"{json.dumps(json.loads(msg.answer), sort_keys=True, indent=4)}")
+                    print(
+                        f"{json.dumps(json.loads(msg.answer), sort_keys=True, indent=4)}"
+                    )
                 except:
                     pass
             else:
                 LOGGER.error(f"Error no message returned from {uid}.")
 
         if not await self._send_to_bulbs(
-            args_parsed, args_in, udp=self.udp, tcp=self.tcp, timeout_ms=timeout_ms, async_answer_callback=async_answer_callback
+            args_parsed,
+            args_in,
+            udp=self.udp,
+            tcp=self.tcp,
+            timeout_ms=timeout_ms,
+            async_answer_callback=async_answer_callback,
         ):
             exit_ret = 1
 
@@ -3197,18 +3435,19 @@ class Klyqa_account:
         LOGGER.debug("Closing ports")
         if local_communication:
             try:
-                self.tcp.shutdown(socket.SHUT_RDWR)
-                self.tcp.close()
-                LOGGER.debug("Closed TCP port 3333")
+                if self.tcp:
+                    self.tcp.shutdown(socket.SHUT_RDWR)
+                    self.tcp.close()
+                    LOGGER.debug("Closed TCP port 3333")
             except:
                 pass
 
             try:
-                self.udp.close()
-                LOGGER.debug("Closed UDP port 2222")
+                if self.udp:
+                    self.udp.close()
+                    LOGGER.debug("Closed UDP port 2222")
             except:
                 pass
-            tcp_udp_port_lock.release()
 
         return exit_ret
 
@@ -3296,6 +3535,7 @@ def main():
     klyqa_acc.shutdown()
 
     sys.exit(exit_ret)
+
 
 if __name__ == "__main__":
     main()
