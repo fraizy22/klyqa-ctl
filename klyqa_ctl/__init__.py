@@ -11,9 +11,10 @@
 #
 ###################################################################
 
-__version__ = "1.0.9"
-__author__ = 'Frederick Stallmeyer <fraizy@gmx.de>'
-__license__ = 'MIT'
+__version__ = "1.0.17"
+__author__ = "Frederick Stallmeyer <fraizy@gmx.de>"
+__license__ = "MIT"
 
-from .klyqa_ctl import Klyqa_account, Data_communicator
-
+from .klyqa_ctl import *
+from .general import *
+from .devices.device import format_uid
