@@ -20,3 +20,4 @@ docs
 apidoc
 old
 test_code
+pytest.log
