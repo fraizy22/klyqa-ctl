@@ -66,6 +66,8 @@ async def main() -> None:
     await acc.get_account_state(
         print_onboarded_devices=print_onboarded_devices
     )
+    if acc.cloud:
+        await acc.cloud.get_device_configs({"@klyqa.lighting.rgb-cw-ww.e27"})
 
     exit_ret = 0
 
