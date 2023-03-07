@@ -600,7 +600,7 @@ class Address:
     port: int = -1
 
 
-def enum_index(key: str, enum: Type[Enum]) -> Any:
+def enum_index(key: str, enum: type[Enum]) -> Any:
     """Search string key name in enumeration and return the value."""
 
     return [i.value for i in enum if i.name == key][0]

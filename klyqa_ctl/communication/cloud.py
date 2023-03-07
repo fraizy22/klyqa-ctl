@@ -97,9 +97,10 @@ class CloudBackend:
     async def get_device_configs(self, device_product_ids: set[str]) -> None:
         """Request device configs by product id from the cloud."""
 
+        loop: AbstractEventLoop = get_asyncio_loop()
         if device_product_ids and self.controller_data.device_configs:
             device_tasks: list[Task] = [
-                asyncio.create_task(
+                loop.create_task(
                     self.get_device_config(
                         product_id, self.controller_data.device_configs
                     )
