@@ -4,17 +4,13 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from enum import Enum
-import json
 from typing import Any, Callable
-from klyqa_ctl.devices.commands import CommandAutoBuild
 
+from klyqa_ctl.devices.commands import CommandAutoBuild
 from klyqa_ctl.devices.light.commands import RequestCommand
 from klyqa_ctl.devices.vacuum.general import VcSuctionStrengths, VcWorkingMode
-from klyqa_ctl.general.general import (
-    Command,
-    CommandType as MessageCommandType,
-)
-from klyqa_ctl.general.general import LOGGER
+from klyqa_ctl.general.general import CommandType as MessageCommandType
+from klyqa_ctl.general.general import LOGGER, Command
 from klyqa_ctl.general.general import TypeJson
 
 

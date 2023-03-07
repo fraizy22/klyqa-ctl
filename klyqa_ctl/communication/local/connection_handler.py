@@ -591,10 +591,6 @@ class LocalConnectionHandler(ConnectionHandler):
         ):
             return
 
-        # def remove_empty_sub_queue() -> None:
-        #     if sub_q in self.message_queue and not self.message_queue[sub_q]:
-        #         del self.message_queue[sub_q]
-
         task_log_debug("remove message from queue")
         task_log_trace("%s", msg)
 
@@ -609,8 +605,6 @@ class LocalConnectionHandler(ConnectionHandler):
             for _, q in self.message_queue.items():
                 if msg in q:
                     q.remove(msg)
-
-        # remove_empty_sub_queue()
 
     async def remove_msg_from_queue_cb(
         self, msg: Message, sub_q: str = ""
@@ -735,12 +729,6 @@ class LocalConnectionHandler(ConnectionHandler):
                         await self.remove_msg_from_queue_cb(
                             msg, msg.target_uid or msg.target_ip
                         )
-                        # if not isinstance(msg, BroadcastMessage):
-                        #     await self.remove_msg_from_queue_cb(
-                        #         msg, device.u_id
-                        #     )
-                        # else:
-                        #     await self.remove_msg_from_queue_cb(msg, "all")
                         return DeviceTcpReturn.MSG_VALUES_OUT_OF_RANGE_LIMITS
 
                 try:
@@ -795,29 +783,11 @@ class LocalConnectionHandler(ConnectionHandler):
         if con.msg and con.msg.state == MessageState.ANSWERED:
             con.msg = None
 
-        # bm_l: list[BroadcastMessage] | None = None
-        # bm: BroadcastMessage | None = None
-        # if (
-        #     "all" in self.message_queue
-        #     and len(self.message_queue["all"]) > 0
-        #     and isinstance(self.message_queue["all"][0], BroadcastMessage)
-        # ):
-        #     bm_l = cast(list[BroadcastMessage], self.message_queue["all"])
-
         while not communication_finished and (
             not con.device.u_id
-            # # pylint: disable-next=unidiomatic-typecheck
-            # or type(con.device) == Device
             or con.device.u_id in self.message_queue
-            # or bm_l  # and bm and device.u_id not in bm.sent_to)
             or con.msg
         ):
-            # # look if we have a broadcast message to send to the device
-            # if not bm and con.device.u_id and bm_l:
-            #     for m in bm_l:
-            #         if con.device.u_id not in m.sent_to:
-            #             con.msg = m
-            #             break
 
             if (
                 con.msg
@@ -827,9 +797,7 @@ class LocalConnectionHandler(ConnectionHandler):
                 con.msg = None
 
             if con.state == AesConnectionState.CONNECTED and (
-                con.msg is None
-                # or isinstance(con.msg, BroadcastMessage)
-                or con.msg.state == MessageState.SELECTED
+                con.msg is None or con.msg.state == MessageState.SELECTED
             ):
                 return_val = await self.handle_send_msg(con)
                 if return_val != DeviceTcpReturn.NO_ERROR:
@@ -1184,7 +1152,6 @@ class LocalConnectionHandler(ConnectionHandler):
 
         try:
             while True:
-                # to_del_uids: list[str] = []
                 to_del_msgs: list[Message] = []
 
                 for uid, msgs in self.message_queue.items():
@@ -1200,16 +1167,6 @@ class LocalConnectionHandler(ConnectionHandler):
                                 "Error while deleting message from queue."
                             )
                             task_log_trace_ex()
-                    # if uid in self.message_queue and not msgs:
-                    #     to_del_uids.append(uid)
-                # for uid in to_del_uids:
-                #     try:
-                #         del self.message_queue[uid]
-                #     except ValueError:
-                #         task_log_debug(
-                #             "Error while deleting uid messages from queue."
-                #         )
-                #         task_log_trace_ex()
                 try:
                     self.check_messages_ttl_event.clear()
                     await asyncio.wait_for(
@@ -1286,7 +1243,6 @@ class LocalConnectionHandler(ConnectionHandler):
             return
 
         loop: AbstractEventLoop = get_asyncio_loop()
-        # device: Device = Device()
         addr: tuple
         connection: TcpConnection = TcpConnection()
 
@@ -1294,29 +1250,23 @@ class LocalConnectionHandler(ConnectionHandler):
             connection.socket,
             addr,
         ) = self.tcp.accept()
-        # if not addr[0] in self.current_addr_connections:
-        # self.current_addr_connections.add(addr[0])
-        # connection.address.ip = addr[0]
-        # connection.address.port = addr[1]
+
         connection.address = Address(*addr)
 
         # FOR DEBUG out
-        # new_task: Task[DeviceTcpReturn] = loop.create_task(
-        #     self.device_handle_local_tcp(device, connection)
-        # )
+        new_task: Task[DeviceTcpReturn] = loop.create_task(
+            self.device_handle_local_tcp(connection)
+        )
 
-        # loop.create_task(asyncio.wait_for(new_task, timeout=proc_timeout_secs))
+        loop.create_task(asyncio.wait_for(new_task, timeout=proc_timeout_secs))
 
         # FOR DEBUG in
-        await self.device_handle_local_tcp(connection)
+        # await self.device_handle_local_tcp(connection)
 
         task_log_debug(
             f"Address {connection.address.ip} process task created."
         )
-        # self.__tasks_undone.append((new_task, datetime.datetime.now()))
-
-        # else:
-        #     task_log_debug(f"Address {addr[0]} already in connection.")
+        self.__tasks_undone.append((new_task, datetime.datetime.now()))
 
     def read_udp_socket_task(self) -> None:
         """Start read UDP socket for incoming syncs, when not running."""
@@ -1548,7 +1498,6 @@ class LocalConnectionHandler(ConnectionHandler):
     ) -> bool:
         """Add message to message's queue and start time to live timeout
         task."""
-
 
         loop: AbstractEventLoop = get_asyncio_loop()
 

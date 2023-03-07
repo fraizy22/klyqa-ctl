@@ -17,7 +17,7 @@ from klyqa_ctl.general.general import (
     TypeJson,
     set_debug_logger,
 )
-from klyqa_ctl.general.message import Message  # AES_KEY_DEV,
+from klyqa_ctl.general.message import Message
 from klyqa_ctl.local_controller import LocalController
 
 SUT_UNIT_ID: str = "00ac629de9ad2f4409dc"
