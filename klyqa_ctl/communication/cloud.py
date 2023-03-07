@@ -97,10 +97,11 @@ class CloudBackend:
     async def get_device_configs(self, device_product_ids: set[str]) -> None:
         """Request device configs by product id from the cloud."""
 
-        loop: AbstractEventLoop = get_asyncio_loop()
-        if device_product_ids and self.controller_data.device_configs:
+        if device_product_ids and isinstance(
+            self.controller_data.device_configs, dict
+        ):
             device_tasks: list[Task] = [
-                loop.create_task(
+                asyncio.create_task(
                     self.get_device_config(
                         product_id, self.controller_data.device_configs
                     )
@@ -111,6 +112,8 @@ class CloudBackend:
                 device_tasks, timeout=DEFAULT_HTTP_REQUEST_TIMEOUT_SECS
             )
 
+        device_configs_cache: dict | None = None
+        cached: bool = False
         device_configs_cache, cached = await async_json_cache(
             self.controller_data.device_configs, "device.configs.json"
         )
@@ -304,7 +307,6 @@ class CloudBackend:
         # timeout_ms = 30000
 
         async def process_cloud_messages(target_uids: set[str]) -> None:
-
             loop: AbstractEventLoop = get_asyncio_loop()
             threads: list[Any] = []
             target_devices: list[Device] = [

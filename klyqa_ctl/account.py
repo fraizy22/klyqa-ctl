@@ -247,7 +247,7 @@ class Account:
                     RequestMethod.POST,
                     "auth/login",
                     json=login_data,
-                    timeout=10,
+                    timeout=30,
                 )
                 if not login_response:
                     return False
@@ -341,7 +341,6 @@ class Account:
             return False
 
         for device_sets in self.settings["devices"]:
-
             self.ctld.aes_keys[
                 format_uid(device_sets["localDeviceId"])
             ] = aes_key_to_bytes(device_sets["aesKey"])
@@ -589,7 +588,7 @@ class Account:
 
         for product_id in list(product_ids):
             if (
-                self.ctld.device_configs
+                isinstance(self.ctld.device_configs, dict)
                 and product_id in self.ctld.device_configs
             ):
                 continue

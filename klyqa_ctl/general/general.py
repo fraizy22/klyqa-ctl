@@ -378,7 +378,6 @@ async def async_json_cache(
             str(Path(*k_ctl_main_path_parts).absolute()) + f"/{json_file}"
         )
         for cache_path in [klyqa_data_path + f"/{json_file}", dc_default_path]:
-
             task_log_trace(f"Try read cache file {cache_path}.")
             try:
                 async with aiofiles.open(cache_path, mode="r") as f:
