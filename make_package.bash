@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -ex
+
 (d="dist.org/$(date +%Y%m%d_%H%M%S)"
 mkdir -vp "$d"
 mv dist/ $d)
@@ -13,15 +14,16 @@ target=$(cd dist && ls *.tar.gz)
 rm -rf package.test.venv
 mkdir package.test.venv
 cp dist/$target package.test.venv
+
 (
-python3 -m venv package.test.venv
-cd package.test.venv/
-source ./bin/activate
-echo "install klyqa ctl package ..."
-python3.9 -m pip install $target
-echo "test klyqa ctl package module ..."
-python3.9 -m klyqa_ctl lighting --version
-echo "is working ..."
+    python3 -m venv package.test.venv
+    cd package.test.venv/
+    source ./bin/activate
+    echo "install klyqa ctl package ..."
+    python3.9 -m pip install $target
+    echo "test klyqa ctl package module ..."
+    python3.9 -m klyqa_ctl lighting --version
+    echo "is working ..."
 )
 
 echo "continue signing and upload to test pypi and pypi "
